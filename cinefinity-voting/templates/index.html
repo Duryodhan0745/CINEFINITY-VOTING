@@ -1,9 +1,215 @@
 {% extends "base.html" %}
+{% block title %}CINEFINITY 2026 — Freshers Voting{% endblock %}
+
 {% block content %}
-{% include "brand.html" %}
-<p style="text-align:center"><a class="btn btn-big" href="{{ url_for('vote') }}">VOTE NOW →</a></p>
-<p class="notice">{% if status == 'active' %}Voting is open now!{% else %}Voting is currently closed.{% endif %}</p>
-<section class="grid2" aria-label="Categories">
-{% for label in labels %}<div class="panel"><strong>{{ label }}</strong></div>{% endfor %}
-</section>
+<!-- Subtle Admin Access Button (discrete in corner) -->
+<button type="button" id="admin-trigger" class="subtle-admin-btn{% if is_admin %} admin-logged-in{% endif %}" aria-label="Admin Access">
+  {% if is_admin %}Admin Panel ⚙️{% else %}Admin ↗{% endif %}
+</button>
+
+<!-- Connection lost banner (voter page) -->
+<div id="conn-banner" class="conn-banner" role="alert" aria-live="assertive">
+  ⚠ Connection lost. Reconnecting…
+</div>
+
+<!-- Voting status change banner (voter whose page was already open) -->
+<div id="voter-status-bar" role="status" aria-live="polite"></div>
+
+<!-- ================= PUBLIC VOTING INTERFACE ================= -->
+<div id="voter-view">
+  {% include "brand.html" %}
+
+  <h2 class="section-title">Cast Your Votes</h2>
+  <p class="notice" id="voter-notice">
+    {% if status != 'active' %}
+      Voting is currently closed.
+    {% else %}
+      ★ Select 1 contestant in each category to submit!
+    {% endif %}
+  </p>
+
+  <form id="ballot" autocomplete="off">
+    <div id="categories-container">
+      {% for g in groups %}
+      <section class="category" aria-labelledby="cat-{{ g.key }}" data-category="{{ g.key }}">
+        <h3 id="cat-{{ g.key }}">{{ g.label|upper }}</h3>
+        <div class="cards">
+        {% for c in g["items"] %}
+          <label class="card" data-cid="{{ c.id }}">
+            <input type="radio" name="{{ g.key }}" value="{{ c.id }}" {% if status != 'active' %}disabled{% endif %}>
+            {% if c.photo_url %}
+              <img src="{{ c.photo_url }}" alt="{{ c.name }}" loading="lazy" width="300" height="300">
+            {% else %}
+              <div class="ph" aria-hidden="true">★</div>
+            {% endif %}
+            <span class="name">{{ c.name }}</span>
+            <span class="select">Select</span>
+          </label>
+        {% endfor %}
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+
+    <button id="submit" class="btn btn-big" type="submit" disabled>SUBMIT MY VOTES</button>
+    <p id="msg" class="notice" role="status" aria-live="polite"></p>
+  </form>
+</div>
+
+<!-- ================= CONFIRMATION OVERLAY ================= -->
+<div id="confirmation-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="conf-title">
+  <div class="modal-card">
+    <div class="badge-check" aria-hidden="true">✓</div>
+    <h2 id="conf-title" style="color:var(--red);font-size:2rem;margin:0 0 8px">VOTE RECORDED</h2>
+    <p style="font-size:1.15rem;margin:8px 0">Your votes have been successfully submitted.</p>
+    <p style="margin:12px 0 20px;font-weight:700">Thank you for participating in CINEFINITY 2026!</p>
+    <button type="button" class="btn btn-ghost" id="conf-close-btn" style="min-width:140px">Done</button>
+  </div>
+</div>
+
+<!-- ================= ADMIN LOGIN MODAL ================= -->
+<div id="admin-login-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="login-title">
+  <div class="modal-card">
+    <button type="button" class="modal-close" id="admin-login-close" aria-label="Close">&times;</button>
+    <h2 id="login-title" style="color:var(--red);margin:0 0 16px">Admin Access</h2>
+    <form id="admin-login-form">
+      <label style="display:block;text-align:left;font-weight:700;margin-bottom:6px">Password</label>
+      <input type="password" id="admin-password" placeholder="Enter admin password" required style="width:100%;margin-bottom:12px">
+      <button type="submit" id="admin-login-btn" class="btn" style="width:100%">LOGIN</button>
+      <p id="admin-login-err" class="notice" style="display:none;margin-top:10px"></p>
+    </form>
+  </div>
+</div>
+
+<!-- ================= ADMIN DASHBOARD OVERLAY ================= -->
+<div id="admin-dashboard-view" class="admin-overlay" role="region" aria-label="Admin Dashboard">
+  <header class="admin-topbar">
+    <h1 class="admin-title">★ CINEFINITY ADMIN PANEL</h1>
+    <div class="admin-top-actions">
+      <button type="button" id="btn-open-projector" class="btn btn-sm btn-ghost">📊 Live Results ↗</button>
+      <button type="button" id="btn-toggle-voter-view" class="btn btn-sm btn-ghost">👁️ Voter View</button>
+      <button type="button" id="btn-admin-logout" class="btn btn-sm">Log Out</button>
+    </div>
+  </header>
+
+  <div class="wrap" style="padding-top:16px">
+    <!-- Event Controls -->
+    <section class="panel">
+      <div class="grid2">
+        <div>
+          <strong>Voting Status:</strong>
+          <span id="admin-status-badge" class="pill {% if status == 'active' %}live{% else %}closed{% endif %}" style="font-size:0.9rem;padding:2px 12px;margin-left:6px">
+            {% if status == 'active' %}ACTIVE{% else %}CLOSED{% endif %}
+          </span>
+        </div>
+        <div>
+          <strong>Ballots:</strong> <span id="admin-ballots-count">{{ ballots }}</span>
+          · <strong>Votes:</strong> <span id="admin-votes-count">{{ total_votes }}</span>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button type="button" id="btn-start-voting" class="btn btn-sm">START VOTING</button>
+          <button type="button" id="btn-stop-voting" class="btn btn-sm btn-ghost">STOP VOTING</button>
+        </div>
+        <div>
+          <button type="button" id="btn-admin-quick-projector" class="btn btn-sm btn-ghost">Open Live Results (Projector)</button>
+        </div>
+      </div>
+
+      <!-- Live Callout when voting is active (allows Admin to cast vote as normal voter) -->
+      <div id="admin-live-banner" class="admin-live-callout" style="display: {% if status == 'active' %}flex{% else %}none{% endif %};">
+        <div class="admin-live-badge">🟢 VOTING IS LIVE</div>
+        <button type="button" id="btn-go-to-voting" class="btn btn-sm btn-gold">GO TO VOTING</button>
+      </div>
+    </section>
+
+    <!-- Contestants Management -->
+    <div id="admin-contestants-container">
+      {% for g in admin_groups %}
+      <section class="panel" data-cat-key="{{ g.key }}">
+        <h2 style="color:var(--red);margin-top:0">{{ g.label|upper }}</h2>
+        <div class="cat-contestants-list">
+          {% for c in g["items"] %}
+          <form class="c-form contestant-form" data-cid="{{ c.id }}" enctype="multipart/form-data">
+            <div style="display:flex;gap:10px;align-items:center">
+              {% if c.photo_url %}
+                <img src="{{ c.photo_url }}" alt="" width="70" height="70" loading="lazy" style="border-radius:8px;object-fit:cover">
+              {% else %}
+                <div class="ph" style="width:70px;height:70px;border-radius:8px;font-size:1.8rem">★</div>
+              {% endif %}
+              <div style="flex:1">
+                <label>Name
+                  <input name="name" value="{{ c.name }}" maxlength="60" required style="width:100%">
+                </label>
+              </div>
+            </div>
+            <label>Category
+              <select name="category">
+                {% for k, v in categories.items() %}
+                <option value="{{ k }}" {% if k == c.category %}selected{% endif %}>{{ v }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Display order
+              <input type="number" name="display_order" min="1" max="99" value="{{ c.display_order }}">
+            </label>
+            <label class="check">
+              <input type="checkbox" name="active" {% if c.active %}checked{% endif %}> Enabled on ballot
+            </label>
+            <label>Photo (max 3 MB)
+              <input type="file" name="photo" accept="image/jpeg,image/png,image/webp">
+            </label>
+            <div class="c-form-actions">
+              <button class="btn btn-sm" type="submit">Save Changes</button>
+              <button class="btn btn-sm btn-danger btn-delete-contestant" type="button" data-cid="{{ c.id }}">Delete</button>
+              <span class="c-form-status notice" style="font-size:0.85rem"></span>
+            </div>
+          </form>
+          {% endfor %}
+        </div>
+
+        {% if g["items"]|length < max_per %}
+        <button type="button" class="btn btn-sm btn-ghost btn-add-contestant" data-cat-key="{{ g.key }}" style="margin-top:8px">
+          + Add Contestant
+        </button>
+        {% endif %}
+      </section>
+      {% endfor %}
+    </div>
+
+    <!-- Reset Votes Panel -->
+    <section class="panel">
+      <h2 style="margin-top:0">Reset Votes</h2>
+      <p style="margin:4px 0 12px">Voting must be stopped before resetting. Resetting permanently deletes all cast votes.</p>
+      <button type="button" id="btn-reset-votes" class="btn btn-danger">RESET ALL VOTES</button>
+    </section>
+  </div>
+</div>
+
+<!-- ================= FULLSCREEN PROJECTOR RESULTS OVERLAY ================= -->
+<div id="projector-view" class="projector-overlay" role="region" aria-label="Auditorium Projector Live Results">
+  <div class="proj-topbar">
+    <div>
+      <h1 class="logo" style="margin:0">Cinefinity 2026</h1>
+      <span id="proj-status" class="pill {% if status == 'active' %}live{% else %}closed{% endif %}">
+        {% if status == 'active' %}LIVE VOTING{% else %}VOTING CLOSED{% endif %}
+      </span>
+    </div>
+    <button type="button" id="btn-back-to-admin" class="btn btn-ghost" style="font-size:1.1rem;padding:8px 20px">
+      ← BACK TO ADMIN
+    </button>
+  </div>
+
+  <div id="proj-cats"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.APP_CONFIG = {
+    isAdmin: {{ 'true' if is_admin else 'false' }},
+    status: "{{ status }}",
+    categories: {{ categories|tojson }}
+  };
+</script>
+<script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
 {% endblock %}

@@ -1,0 +1,18 @@
+# Environments and credentials
+.env
+*.env
+serviceAccountKey.json
+*serviceAccount*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,94 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Application Architecture:
+    // CINEFINITY Voting is a server-rendered Flask web application. All database
+    // transactions (retrieving voting status, loading contestants, casting atomic
+    // vote ballots, aggregating vote tallies, and administering event parameters)
+    // are executed exclusively on the server side using the Firebase Admin SDK
+    // with privileged service account credentials.
+    //
+    // The Firebase Admin SDK operates with administrative privileges and explicitly
+    // bypasses all Cloud Firestore Security Rules.
+    //
+    // Untrusted browser and mobile clients NEVER connect directly to Cloud Firestore.
+    // Permitting direct client SDK access would expose sensitive voter ballot data,
+    // allow premature live tally leaks before official announcements, and permit
+    // vote tampering or ballot stuffing.
+    //
+    // Consequently, all client SDK operations across all collections are strictly
+    // denied (Default Deny).
+    //
+    // ---------------------------------------------------------------
+    // Collections:
+    //
+    // 1. Collection: settings
+    //    Document ID: 'event'
+    //    Fields:
+    //      - event_name: string (required) - Name of the event (e.g., "CINEFINITY 2026")
+    //      - voting_status: string (required) - Current voting state: "active" or "closed"
+    //
+    // 2. Collection: contestants
+    //    Document ID: auto-generated ID (string)
+    //    Fields:
+    //      - name: string (required) - Contestant name (1 to 60 characters)
+    //      - category: string (required) - Category key ('mr_freshers', 'mrs_freshers', 'mr_stylist', 'mrs_stylist')
+    //      - photo_url: string (optional) - Storage download URL
+    //      - display_order: int (required) - Ordering number (1 to 99)
+    //      - active: bool (required) - Whether contestant is active on ballot
+    //
+    // 3. Collection: votes
+    //    Document ID: voter_token_hash (64-character SHA-256 hex string)
+    //    Fields:
+    //      - voter_token_hash: string (required) - SHA-256 hash of the voter's token
+    //      - mr_freshers: string (required) - Chosen contestant ID for Mr Freshers
+    //      - mrs_freshers: string (required) - Chosen contestant ID for Mrs Freshers
+    //      - mr_stylist: string (required) - Chosen contestant ID for Mr Stylist
+    //      - mrs_stylist: string (required) - Chosen contestant ID for Mrs Stylist
+    //      - created_at: timestamp (required) - Server timestamp of vote creation
+    //
+    // 4. Collection: tallies
+    //    Document ID: 'current'
+    //    Fields:
+    //      - ballots: int (required) - Total valid ballots submitted
+    //      - mr_freshers: map (required) - Map of contestant IDs to vote counts
+    //      - mrs_freshers: map (required) - Map of contestant IDs to vote counts
+    //      - mr_stylist: map (required) - Map of contestant IDs to vote counts
+    //      - mrs_stylist: map (required) - Map of contestant IDs to vote counts
+    //
+    // ===============================================================
+    // Security Rules
+    // ===============================================================
+
+    // Root catch-all: Deny all client SDK read and write access by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Settings collection: Managed solely via Flask Admin SDK
+    match /settings/{settingId} {
+      allow read, write: if false;
+    }
+
+    // Contestants collection: Read and managed solely via Flask Admin SDK
+    match /contestants/{contestantId} {
+      allow read, write: if false;
+    }
+
+    // Votes collection: Ballot creation and deletion handled exclusively by Flask Admin SDK
+    match /votes/{voteId} {
+      allow read, write: if false;
+    }
+
+    // Tallies collection: Aggregation and tally inspection handled exclusively by Flask Admin SDK
+    match /tallies/{tallyId} {
+      allow read, write: if false;
+    }
+  }
+}

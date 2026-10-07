@@ -15,7 +15,7 @@
 {% for g in groups %}
 <section class="panel">
   <h2 style="color:var(--red);margin-top:0">{{ g.label|upper }}</h2>
-  {% for c in g.items %}
+  {% for c in g["items"] %}
   <form class="c-form" method="post" enctype="multipart/form-data" action="{{ url_for('admin_update_contestant', cid=c.id) }}">
     {% if c.photo_url %}<img src="{{ c.photo_url }}" alt="" width="90" height="90" loading="lazy" style="border-radius:8px;object-fit:cover">{% endif %}
     <label>Name <input name="name" value="{{ c.name }}" maxlength="60" required></label>
@@ -28,7 +28,7 @@
     <button class="btn" type="submit">Save</button>
   </form>
   {% endfor %}
-  {% if g.items|length < max_per %}
+  {% if g["items"]|length < max_per %}
   <form method="post" action="{{ url_for('admin_new_contestant') }}">
     <input type="hidden" name="category" value="{{ g.key }}">
     <button class="btn btn-ghost" type="submit">+ Add Contestant</button>

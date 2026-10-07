@@ -1,0 +1,17 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Contestant photos: Public read so voters can see contestant headshots
+    // Uploads are handled exclusively by Flask backend via Firebase Admin SDK
+    match /contestants/{allPaths=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Default deny for any other storage paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -6,10 +6,16 @@ import time
 from collections import defaultdict, deque
 from functools import wraps
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from flask import (Flask, flash, jsonify, make_response, redirect,
                    render_template, request, session, url_for)
 from google.api_core.exceptions import AlreadyExists
-from google.cloud.firestore import SERVER_TIMESTAMP, Increment
+from google.cloud.firestore import SERVER_TIMESTAMP, Increment, FieldFilter
 from werkzeug.exceptions import HTTPException
 
 from utils.firebase import get_bucket, get_db
@@ -47,7 +53,7 @@ def get_status():
 
 def fetch_contestants(active_only=False):
     col = get_db().collection("contestants")
-    query = col.where("active", "==", True) if active_only else col
+    query = col.where(filter=FieldFilter("active", "==", True)) if active_only else col
     items = [{"id": d.id, **d.to_dict()} for d in query.stream()]
     items.sort(key=lambda c: (c.get("display_order", 0), c.get("name", "")))
     return items
@@ -66,7 +72,9 @@ def admin_required(view):
     @wraps(view)
     def wrapper(*args, **kwargs):
         if not session.get("admin"):
-            return redirect(url_for("admin_login"))
+            if request.is_json or request.path.startswith("/api/") or request.headers.get("Accept") == "application/json":
+                return fail("Admin login required.", 401)
+            return redirect(url_for("index") + "#admin")
         return view(*args, **kwargs)
     return wrapper
 
@@ -75,23 +83,62 @@ def fail(message, code):
     return jsonify(ok=False, error=message), code
 
 
-# ---------- public ----------
+# ---------- public (SPA) ----------
 
 @app.get("/")
 def index():
-    return render_template("index.html", status=get_status(), labels=list(CATEGORIES.values()))
-
-
-@app.get("/vote")
-def vote():
     status = get_status()
-    groups = group_by_category(fetch_contestants(active_only=True))
-    resp = make_response(render_template("vote.html", groups=groups, status=status))
+    contestants = fetch_contestants(active_only=True)
+    groups = group_by_category(contestants)
+    is_admin = bool(session.get("admin"))
+
+    admin_groups = []
+    ballots = 0
+    total_votes = 0
+    if is_admin:
+        all_contestants = fetch_contestants(active_only=False)
+        admin_groups = group_by_category(all_contestants)
+        tallies = fetch_tallies()
+        ballots = int(tallies.get("ballots", 0))
+        total_votes = ballots * len(CATEGORIES)
+
+    resp = make_response(render_template(
+        "index.html",
+        status=status,
+        groups=groups,
+        categories=CATEGORIES,
+        max_per=MAX_PER_CATEGORY,
+        is_admin=is_admin,
+        admin_groups=admin_groups,
+        ballots=ballots,
+        total_votes=total_votes,
+    ))
     token = request.cookies.get("voter_token")
     if not token:
         resp.set_cookie("voter_token", secrets.token_urlsafe(32), max_age=60 * 60 * 24 * 30,
                         httponly=True, samesite="Lax", secure=IS_PROD)
     return resp
+
+
+# Legacy route redirects to root SPA
+@app.get("/vote")
+def legacy_vote():
+    return redirect(url_for("index"))
+
+
+@app.get("/confirmation")
+def legacy_confirmation():
+    return redirect(url_for("index") + "#confirmation")
+
+
+@app.get("/results")
+def legacy_results():
+    return redirect(url_for("index") + "#results")
+
+
+@app.get("/admin")
+def legacy_admin():
+    return redirect(url_for("index") + "#admin")
 
 
 @app.post("/vote/submit")
@@ -142,16 +189,6 @@ def vote_submit():
     return resp
 
 
-@app.get("/confirmation")
-def confirmation():
-    return render_template("confirmation.html")
-
-
-@app.get("/results")
-def results():
-    return render_template("results.html")
-
-
 @app.get("/api/results")
 def api_results():
     status = get_status()
@@ -159,136 +196,209 @@ def api_results():
     contestants = fetch_contestants(active_only=True)
     categories = []
     for key, label in CATEGORIES.items():
-        items = [{"id": c["id"], "name": c.get("name", ""), "votes": int(tallies.get(key, {}).get(c["id"], 0))}
-                 for c in contestants if c.get("category") == key]
-        winner, tie = None, False
-        if status == "closed" and items:
+        items = [
+            {
+                "id": c["id"],
+                "name": c.get("name", ""),
+                "photo_url": c.get("photo_url", ""),
+                "votes": int(tallies.get(key, {}).get(c["id"], 0)),
+            }
+            for c in contestants if c.get("category") == key
+        ]
+        winner, tie, leader = None, False, None
+        if items:
             top = max(i["votes"] for i in items)
             leaders = [i for i in items if i["votes"] == top]
-            tie = len(leaders) > 1
-            winner = None if tie else leaders[0]["name"]
-        categories.append({"key": key, "label": label, "items": items, "winner": winner, "tie": tie})
+            if status == "closed":
+                tie = len(leaders) > 1
+                winner = None if tie else leaders[0]["name"]
+            # current front-runner (shown live on projector even while voting is open)
+            leader = leaders[0] if leaders and not (len(leaders) > 1 and top == 0) else None
+        categories.append({"key": key, "label": label, "items": items,
+                           "winner": winner, "tie": tie, "leader": leader})
     return jsonify(status=status, ballots=int(tallies.get("ballots", 0)), categories=categories)
 
 
-# ---------- admin ----------
+# ---------- admin & admin APIs ----------
 
 @app.route("/admin/login", methods=["GET", "POST"])
+@app.post("/api/admin/login")
 def admin_login():
     if request.method == "POST":
-        if rate_limited(f"login:{request.remote_addr}", 5, 300):
+        if rate_limited(f"login:{request.remote_addr}", 10, 300):
+            if request.is_json or request.path.startswith("/api/"):
+                return fail("Too many attempts. Please wait a few minutes.", 429)
             flash("Too many attempts. Please wait a few minutes.")
-        else:
-            expected = os.environ.get("ADMIN_PASSWORD", "")
-            given = request.form.get("password", "")
-            if expected and hmac.compare_digest(given.encode(), expected.encode()):
-                session.clear()
-                session["admin"] = True
-                return redirect(url_for("admin_dashboard"))
-            flash("Incorrect password.")
-    return render_template("admin_login.html")
+            return redirect(url_for("index") + "#admin")
+
+        expected = os.environ.get("ADMIN_PASSWORD", "")
+        data = request.get_json(silent=True) or request.form
+        given = data.get("password", "")
+        if expected and hmac.compare_digest(given.encode(), expected.encode()):
+            session.clear()
+            session["admin"] = True
+            if request.is_json or request.path.startswith("/api/"):
+                return jsonify(ok=True)
+            return redirect(url_for("index") + "#admin")
+
+        if request.is_json or request.path.startswith("/api/"):
+            return fail("Incorrect password.", 401)
+        flash("Incorrect password.")
+        return redirect(url_for("index") + "#admin")
+    return redirect(url_for("index") + "#admin")
 
 
-@app.post("/admin/logout")
+@app.route("/admin/logout", methods=["GET", "POST"])
+@app.post("/api/admin/logout")
 def admin_logout():
     session.clear()
+    if request.is_json or request.path.startswith("/api/"):
+        return jsonify(ok=True)
     return redirect(url_for("index"))
 
 
-@app.get("/admin")
+@app.get("/api/admin/data")
 @admin_required
-def admin_dashboard():
+def api_admin_data():
     tallies = fetch_tallies()
     ballots = int(tallies.get("ballots", 0))
-    return render_template(
-        "admin.html",
-        groups=group_by_category(fetch_contestants()),
-        categories=CATEGORIES,
+    contestants = fetch_contestants(active_only=False)
+    return jsonify(
+        ok=True,
         status=get_status(),
         ballots=ballots,
         total_votes=ballots * len(CATEGORIES),
+        groups=group_by_category(contestants),
+        categories=CATEGORIES,
         max_per=MAX_PER_CATEGORY,
     )
 
 
 @app.post("/admin/voting")
+@app.post("/api/admin/voting")
 @admin_required
 def admin_voting():
-    action = request.form.get("action")
+    action = (request.get_json(silent=True) or {}).get("action") or request.form.get("action")
     if action not in ("start", "stop"):
-        flash("Unknown action.")
-    else:
-        get_db().collection("settings").document("event").set(
-            {"voting_status": "active" if action == "start" else "closed", "event_name": "CINEFINITY 2026"},
-            merge=True)
-        flash("Voting is now " + ("ACTIVE." if action == "start" else "CLOSED."))
-    return redirect(url_for("admin_dashboard"))
+        return fail("Unknown action.", 400)
+    new_status = "active" if action == "start" else "closed"
+    get_db().collection("settings").document("event").set(
+        {"voting_status": new_status, "event_name": "CINEFINITY 2026"},
+        merge=True)
+    if request.is_json or request.path.startswith("/api/"):
+        return jsonify(ok=True, status=new_status)
+    flash("Voting is now " + ("ACTIVE." if action == "start" else "CLOSED."))
+    return redirect(url_for("index") + "#admin")
 
 
 @app.post("/admin/contestant/new")
+@app.post("/api/admin/contestant/new")
 @admin_required
 def admin_new_contestant():
-    category = request.form.get("category")
+    category = (request.get_json(silent=True) or {}).get("category") or request.form.get("category")
     db = get_db()
     if category not in CATEGORIES:
-        flash("Invalid category.")
-    else:
-        existing = list(db.collection("contestants").where("category", "==", category).stream())
-        if len(existing) >= MAX_PER_CATEGORY:
-            flash(f"{CATEGORIES[category]} already has {MAX_PER_CATEGORY} contestants.")
-        else:
-            db.collection("contestants").add({
-                "name": "New contestant", "category": category, "photo_url": "",
-                "display_order": len(existing) + 1, "active": False,
-            })
-            flash("Contestant added. Edit the name and photo below.")
-    return redirect(url_for("admin_dashboard"))
+        return fail("Invalid category.", 400)
+    existing = list(db.collection("contestants").where(filter=FieldFilter("category", "==", category)).stream())
+    if len(existing) >= MAX_PER_CATEGORY:
+        return fail(f"{CATEGORIES[category]} already has {MAX_PER_CATEGORY} contestants.", 400)
+    doc_ref = db.collection("contestants").add({
+        "name": "New contestant", "category": category, "photo_url": "",
+        "display_order": len(existing) + 1, "active": False,
+    })
+    cid = doc_ref[1].id
+    if request.is_json or request.path.startswith("/api/"):
+        return jsonify(ok=True, id=cid)
+    flash("Contestant added. Edit the name and photo below.")
+    return redirect(url_for("index") + "#admin")
 
 
 @app.post("/admin/contestant/<cid>")
+@app.post("/api/admin/contestant/<cid>")
 @admin_required
 def admin_update_contestant(cid):
     ref = get_db().collection("contestants").document(cid)
     if not ref.get().exists:
+        if request.is_json or request.path.startswith("/api/") or request.headers.get("X-Requested-With"):
+            return fail("Contestant not found.", 404)
         flash("Contestant not found.")
-        return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("index") + "#admin")
 
     name = (request.form.get("name") or "").strip()[:60]
     category = request.form.get("category")
     if not name or category not in CATEGORIES:
+        if request.is_json or request.path.startswith("/api/") or request.headers.get("X-Requested-With"):
+            return fail("A name and a valid category are required.", 400)
         flash("A name and a valid category are required.")
-        return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("index") + "#admin")
     try:
         order = max(1, min(99, int(request.form.get("display_order", 1))))
     except ValueError:
         order = 1
 
-    data = {"name": name, "category": category, "display_order": order,
-            "active": request.form.get("active") == "on"}
+    active_raw = request.form.get("active")
+    active = active_raw in ("on", "true", "1", True)
+
+    data = {"name": name, "category": category, "display_order": order, "active": active}
 
     photo = request.files.get("photo")
     if photo and photo.filename:
         problem = validate_image(photo)
         if problem:
+            if request.is_json or request.path.startswith("/api/") or request.headers.get("X-Requested-With"):
+                return fail(problem, 400)
             flash(problem)
-            return redirect(url_for("admin_dashboard"))
+            return redirect(url_for("index") + "#admin")
         ext = SIGNATURES[photo.mimetype][1]
         blob = get_bucket().blob(f"contestants/{cid}-{secrets.token_hex(4)}.{ext}")
         blob.upload_from_file(photo.stream, content_type=photo.mimetype)
-        blob.make_public()
-        data["photo_url"] = blob.public_url
+        try:
+            blob.make_public()
+            data["photo_url"] = blob.public_url
+        except Exception:
+            # Fallback when uniform bucket-level access is enabled:
+            token = secrets.token_urlsafe(32)
+            blob.metadata = {"firebaseStorageDownloadTokens": token}
+            blob.patch()
+            from urllib.parse import quote
+            data["photo_url"] = (
+                f"https://firebasestorage.googleapis.com/v0/b/{blob.bucket.name}/o/"
+                f"{quote(blob.name, safe='')}?alt=media&token={token}"
+            )
 
     ref.update(data)
+    if request.is_json or request.path.startswith("/api/") or request.headers.get("X-Requested-With"):
+        return jsonify(ok=True, data=data)
     flash(f"Saved {name}.")
-    return redirect(url_for("admin_dashboard"))
+    return redirect(url_for("index") + "#admin")
+
+
+@app.post("/admin/contestant/<cid>/delete")
+@app.post("/api/admin/contestant/<cid>/delete")
+@admin_required
+def admin_delete_contestant(cid):
+    ref = get_db().collection("contestants").document(cid)
+    if not ref.get().exists:
+        if request.is_json or request.path.startswith("/api/") or request.headers.get("X-Requested-With"):
+            return fail("Contestant not found.", 404)
+        flash("Contestant not found.")
+        return redirect(url_for("index") + "#admin")
+    ref.delete()
+    if request.is_json or request.path.startswith("/api/") or request.headers.get("X-Requested-With"):
+        return jsonify(ok=True)
+    flash("Contestant removed.")
+    return redirect(url_for("index") + "#admin")
 
 
 @app.post("/admin/reset")
+@app.post("/api/admin/reset")
 @admin_required
 def admin_reset():
     if get_status() == "active":
+        if request.is_json or request.path.startswith("/api/") or request.headers.get("X-Requested-With"):
+            return fail("Stop voting before resetting votes.", 400)
         flash("Stop voting before resetting votes.")
-        return redirect(url_for("admin_dashboard"))
+        return redirect(url_for("index") + "#admin")
     db = get_db()
     while True:
         docs = list(db.collection("votes").limit(400).stream())
@@ -299,8 +409,10 @@ def admin_reset():
             batch.delete(d.reference)
         batch.commit()
     db.collection("tallies").document("current").set({"ballots": 0, **{k: {} for k in CATEGORIES}})
+    if request.is_json or request.path.startswith("/api/") or request.headers.get("X-Requested-With"):
+        return jsonify(ok=True)
     flash("All votes have been reset.")
-    return redirect(url_for("admin_dashboard"))
+    return redirect(url_for("index") + "#admin")
 
 
 # ---------- errors ----------

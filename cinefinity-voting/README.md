@@ -1,47 +1,38 @@
-# CINEFINITY 2026 — Freshers voting
+# CINEFINITY 2026 — Freshers Voting (Unified Single-Page App)
 
-Flask + Firestore + Firebase Storage. Pages: `/` (landing), `/vote` (QR target), `/admin` (password), `/results` (projector).
+Flask + Cloud Firestore + Firebase Storage.
+The entire public experience is a **Single-Page Application (SPA)** hosted at `/`.
 
-## 1. Firebase setup
+- **Root Route `/`**: Landing & voting page in one seamless view. QR codes point directly to `https://YOUR-DOMAIN/`.
+- **Public Flow**: Visual Header → BOLLYWOOD "Lights ★ Camera ★ Fun" → 4 Categories → 12 Contestant Cards → Single-click Submit → In-page confirmation modal (no redirects).
+- **Subtle Admin Access**: Discrete `Admin ↗` button in top corner opens login modal without disrupting normal voters.
+- **Admin Dashboard**: SPA overlay for managing contestants, uploading headshots, starting/stopping voting, and resetting votes.
+- **Live Results (Projector View)**: Fullscreen auditorium projector mode with live auto-refreshing animated bars every 2.5s and `[ ← BACK TO ADMIN ]` return button.
+
+## 1. Firebase Setup
 1. Create a project at console.firebase.google.com.
 2. **Firestore Database** → Create database (production mode).
-3. **Storage** → Get started. In the Storage rules/bucket settings, allow public reads for `contestants/` (photos are shown on the vote page). Make sure uniform bucket-level access is off so `make_public()` works.
-4. Project settings → Service accounts → **Generate new private key**. Keep this file secret.
+3. **Storage** → Get started (bucket name e.g. `<project-id>.firebasestorage.app`).
+4. Project settings → Service accounts → **Generate new private key** → save as `serviceAccountKey.json` in project root.
 
-## 2. Environment variables
-Copy `.env.example` to `.env` (never commit it). Set `FLASK_SECRET_KEY` (long random string — required so sessions and duplicate-vote hashes stay stable across restarts), `ADMIN_PASSWORD`, `FIREBASE_STORAGE_BUCKET`, and either `FIREBASE_CREDENTIALS_JSON` (on Render) or `FIREBASE_CREDENTIALS_PATH` (locally).
-
-## 3. Run locally
+## 2. Environment Variables & Setup
+Run the automated setup tool:
 ```
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-export $(grep -v '^#' .env | xargs)   # or set the variables manually
-python app.py                          # http://127.0.0.1:5000
+python setup_firebase.py
+```
+This automatically verifies Firestore, checks Cloud Storage, seeds default collections, and generates your `.env` configuration.
+
+## 3. Run Locally
+```
+python app.py       # http://127.0.0.1:5000
 ```
 
-## 4. Deploy on Render
-- New → Web Service → connect this repo.
-- Build command: `pip install -r requirements.txt`
-- Start command: `gunicorn app:app` (also in `Procfile`)
-- Add the environment variables above. For `FIREBASE_CREDENTIALS_JSON`, paste the full service-account JSON on one line.
-- Render sets `RENDER` automatically, which turns on secure cookies.
-
-## 5. Event day
-1. Log in at `/admin/login`. Under **Contestants**, click **+ Add Contestant** (3 per category), then fill in name, category, order, and upload a photo for each. Tick **Enabled** when ready.
-2. Test voting on your phone at `/vote`, then reset votes from the admin page.
-3. Click **START VOTING** when ready.
-4. Generate a QR code pointing to `https://YOUR-DOMAIN/vote` (any QR generator). Do not link it to `/results`.
-5. Open `/results` on the projector computer.
-6. Click **STOP VOTING**. Winners appear on `/results`.
-
-Do not change a contestant's category after voting has started; existing votes are tied to the old category.
-
-## Checklist
-- [ ] Add 12 contestants  - [ ] Upload 12 photos  - [ ] Check names
-- [ ] Test voting  - [ ] Start voting  - [ ] Display QR
-- [ ] Open /results on projector  - [ ] Stop voting  - [ ] Confirm winners
-
-## Notes and limits
-- Duplicate protection uses a cookie token. It stops casual double-voting from the same browser, not determined users. Votes are stored under a hash of the token (one vote doc per token).
-- Rate limiting is in memory per Gunicorn worker. It is basic, not a distributed limit.
-- Image checks are type and size only; photos are not re-compressed.
+## 4. Event Day Flow
+1. Open `http://YOUR-DOMAIN/` and click the discrete `Admin ↗` button in the top corner.
+2. Log in with your admin password.
+3. Under **Contestants**, click **+ Add Contestant** (3 per category: Mr Freshers, Mrs Freshers, Mr Stylist, Mrs Stylist). Set names, upload photos, and toggle **Enabled on ballot**.
+4. Test voting on mobile at `http://YOUR-DOMAIN/`, then click **Reset All Votes** from the admin panel if needed.
+5. Click **START VOTING**.
+6. Generate and project a QR code pointing directly to `https://YOUR-DOMAIN/`.
+7. Click **Live Results ↗** to open the full-screen projector view for the auditorium screen.
+8. When voting ends, click **STOP VOTING**. Winners or ties will automatically be announced on the projector display.

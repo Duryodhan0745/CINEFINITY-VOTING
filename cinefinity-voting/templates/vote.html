@@ -9,7 +9,7 @@
 <section class="category" aria-labelledby="cat-{{ g.key }}">
   <h3 id="cat-{{ g.key }}">{{ g.label|upper }}</h3>
   <div class="cards">
-  {% for c in g.items %}
+  {% for c in g["items"] %}
     <label class="card">
       <input type="radio" name="{{ g.key }}" value="{{ c.id }}" {% if status != 'active' %}disabled{% endif %}>
       {% if c.photo_url %}<img src="{{ c.photo_url }}" alt="{{ c.name }}" loading="lazy" width="400" height="400">{% else %}<div class="ph" aria-hidden="true">★</div>{% endif %}
