@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Admin · CINEFINITY{% endblock %}
+{% block content %}
+<h1 class="logo" style="font-size:2.6rem">Admin</h1>
+<section class="panel grid2">
+  <div><strong>Voting:</strong> {% if status == 'active' %}🟢 ACTIVE{% else %}🔴 CLOSED{% endif %}</div>
+  <div><strong>Total ballots:</strong> {{ ballots }} · <strong>Category votes:</strong> {{ total_votes }}</div>
+  <form method="post" action="{{ url_for('admin_voting') }}" style="display:flex;gap:10px;flex-wrap:wrap">
+    <button class="btn" name="action" value="start" type="submit">START VOTING</button>
+    <button class="btn btn-ghost" name="action" value="stop" type="submit">STOP VOTING</button>
+  </form>
+  <p><a class="btn btn-ghost" href="{{ url_for('results') }}" target="_blank">Open live results</a></p>
+</section>
+
+{% for g in groups %}
+<section class="panel">
+  <h2 style="color:var(--red);margin-top:0">{{ g.label|upper }}</h2>
+  {% for c in g.items %}
+  <form class="c-form" method="post" enctype="multipart/form-data" action="{{ url_for('admin_update_contestant', cid=c.id) }}">
+    {% if c.photo_url %}<img src="{{ c.photo_url }}" alt="" width="90" height="90" loading="lazy" style="border-radius:8px;object-fit:cover">{% endif %}
+    <label>Name <input name="name" value="{{ c.name }}" maxlength="60" required></label>
+    <label>Category
+      <select name="category">{% for k, v in categories.items() %}<option value="{{ k }}" {% if k == c.category %}selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+    </label>
+    <label>Display order <input type="number" name="display_order" min="1" max="99" value="{{ c.display_order }}"></label>
+    <label class="check"><input type="checkbox" name="active" {% if c.active %}checked{% endif %}> Enabled</label>
+    <label>Photo (JPG/PNG/WEBP, max 3 MB) <input type="file" name="photo" accept="image/jpeg,image/png,image/webp"></label>
+    <button class="btn" type="submit">Save</button>
+  </form>
+  {% endfor %}
+  {% if g.items|length < max_per %}
+  <form method="post" action="{{ url_for('admin_new_contestant') }}">
+    <input type="hidden" name="category" value="{{ g.key }}">
+    <button class="btn btn-ghost" type="submit">+ Add Contestant</button>
+  </form>
+  {% endif %}
+</section>
+{% endfor %}
+
+<section class="panel">
+  <h2 style="margin-top:0">Reset votes</h2>
+  <p>Stop voting first. Resetting permanently deletes all votes.</p>
+  <form method="post" action="{{ url_for('admin_reset') }}"
+        onsubmit="return confirm('Are you sure?\n\nThis will permanently delete all current votes.\n\nThis action cannot be undone.');">
+    <button class="btn" type="submit">RESET ALL VOTES</button>
+  </form>
+</section>
+
+<form method="post" action="{{ url_for('admin_logout') }}"><button class="btn btn-ghost" type="submit">Log out</button></form>
+{% endblock %}

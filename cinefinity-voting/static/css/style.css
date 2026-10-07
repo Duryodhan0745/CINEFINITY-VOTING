@@ -1,0 +1,54 @@
+:root{--cream:#F5E8CC;--ink:#171717;--red:#E53924;--orange:#F28C18;--gold:#F5B51B;--blue:#2878B8;--card:#FFF8E7}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--cream);color:var(--ink);font-family:"Baloo 2",system-ui,sans-serif;font-weight:500;-webkit-text-size-adjust:100%}
+body{overflow-x:hidden;min-height:100vh}
+.wrap{max-width:960px;margin:0 auto;padding:16px 14px 40px}
+.brand{text-align:center;padding:14px 0 4px}
+.kicker{font-size:.85rem;margin:0}
+.logo{font-family:"Pacifico",cursive;font-weight:400;color:var(--red);font-size:clamp(3rem,16vw,6.5rem);line-height:1.1;margin:.1em 0;text-shadow:3px 3px 0 var(--gold)}
+.year{display:inline-block;background:var(--gold);padding:2px 14px;font-weight:800;transform:rotate(-2deg);margin:0;font-size:1.1rem}
+.theme{font-weight:800;font-size:clamp(1.8rem,9vw,3rem);color:var(--red);margin:.4em 0 0}
+.tag{margin:0 0 6px}
+.strip{height:12px;background:repeating-linear-gradient(90deg,var(--ink) 0 8px,transparent 8px 14px);opacity:.8;margin:10px 0}
+.btn{display:inline-block;appearance:none;border:3px solid var(--ink);background:var(--red);color:#fff;font:inherit;font-weight:800;padding:12px 22px;border-radius:999px;box-shadow:0 4px 0 var(--ink);text-decoration:none;cursor:pointer;min-height:48px;font-size:1.05rem}
+.btn:hover{transform:translateY(-2px)}
+.btn:active{transform:translateY(2px);box-shadow:0 2px 0 var(--ink)}
+.btn:disabled{background:#bbb;cursor:not-allowed;box-shadow:none;transform:none}
+.btn-big{display:block;width:100%;font-size:1.2rem;padding:18px;margin-top:14px}
+.btn-ghost{background:var(--gold);color:var(--ink)}
+.section-title{text-align:center;font-size:1.6rem;margin:18px 0 4px}
+.category{background:var(--card);border:3px solid var(--ink);border-radius:18px;padding:12px;margin:14px 0;box-shadow:0 5px 0 var(--ink)}
+.category h3{margin:0 0 10px;font-size:1.3rem;font-weight:800;color:var(--red)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.card{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;border:3px solid var(--ink);border-radius:14px;padding:8px;background:#fff;cursor:pointer;transition:transform .15s}
+.card:hover{transform:translateY(-2px)}
+.card:focus-within{outline:3px solid var(--blue)}
+.card input{position:absolute;opacity:0;pointer-events:none}
+.card img,.ph{width:100%;aspect-ratio:1;object-fit:cover;border-radius:10px;background:var(--gold)}
+.ph{display:grid;place-items:center;font-size:2.5rem}
+.name{font-weight:800;text-align:center;font-size:1rem;overflow-wrap:anywhere}
+.select{font-size:.8rem;border:2px solid var(--ink);border-radius:999px;padding:2px 10px}
+.card.chosen{background:var(--gold);outline:3px solid var(--red)}
+.card.chosen .select{background:var(--ink);color:#fff}
+.notice{text-align:center;font-weight:700;color:var(--red);min-height:1.2em}
+.flash{background:var(--gold);border:2px solid var(--ink);padding:8px 12px;border-radius:10px;font-weight:700}
+.panel{background:var(--card);border:3px solid var(--ink);border-radius:16px;padding:14px;margin:14px 0}
+.c-form{display:grid;gap:8px;border:2px dashed var(--ink);border-radius:12px;padding:10px;margin:8px 0;background:#fff}
+.c-form label{display:grid;gap:4px;font-weight:700;font-size:.9rem}
+.c-form .check{display:flex;align-items:center;gap:8px}
+input,select{font:inherit;padding:8px;border:2px solid var(--ink);border-radius:8px;min-height:44px;max-width:100%}
+.grid2{display:grid;grid-template-columns:1fr;gap:12px}
+@media(min-width:700px){.c-form{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr 1fr}}
+body.projector{background:var(--ink);color:#fff}
+.projector .logo{color:var(--gold);text-shadow:3px 3px 0 var(--red)}
+.pill{display:inline-block;font-weight:800;padding:6px 16px;border-radius:999px;border:3px solid #fff;font-size:1.1rem}
+.pill.live{background:var(--red)}
+.pill.closed{background:#555}
+.proj-cat{border-top:4px solid var(--gold);padding:14px 0}
+.proj-cat h2{font-size:clamp(1.8rem,5vw,3rem);margin:0 0 8px;color:var(--gold)}
+.winner{font-size:clamp(1.3rem,4vw,2.2rem);font-weight:800;color:var(--gold)}
+.bar-row{display:grid;grid-template-columns:minmax(80px,1fr) 2fr 70px;align-items:center;gap:12px;font-size:clamp(1.1rem,3.5vw,2rem);margin:8px 0}
+.bar-name{overflow-wrap:anywhere}
+.bar-track{background:#333;border-radius:999px;height:28px;overflow:hidden}
+.bar-fill{height:100%;background:linear-gradient(90deg,var(--orange),var(--red));transition:width .6s ease}
+.bar-count{font-weight:800;font-variant-numeric:tabular-nums;text-align:right}

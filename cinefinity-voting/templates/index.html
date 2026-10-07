@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+{% include "brand.html" %}
+<p style="text-align:center"><a class="btn btn-big" href="{{ url_for('vote') }}">VOTE NOW →</a></p>
+<p class="notice">{% if status == 'active' %}Voting is open now!{% else %}Voting is currently closed.{% endif %}</p>
+<section class="grid2" aria-label="Categories">
+{% for label in labels %}<div class="panel"><strong>{{ label }}</strong></div>{% endfor %}
+</section>
+{% endblock %}
