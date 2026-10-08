@@ -143,24 +143,24 @@
               </div>
             </div>
             <label>Category
-              <select name="category">
+              <select name="category" {% if status == 'active' %}disabled title="Category changes are locked while voting is active."{% endif %}>
                 {% for k, v in categories.items() %}
                 <option value="{{ k }}" {% if k == c.category %}selected{% endif %}>{{ v }}</option>
                 {% endfor %}
               </select>
             </label>
             <label>Display order
-              <input type="number" name="display_order" min="1" max="99" value="{{ c.display_order }}">
+              <input type="number" name="display_order" min="1" max="99" value="{{ c.display_order }}" {% if status == 'active' %}disabled title="Display order is locked while voting is active."{% endif %}>
             </label>
             <label class="check">
-              <input type="checkbox" name="active" {% if c.active %}checked{% endif %}> Enabled on ballot
+              <input type="checkbox" name="active" {% if c.active %}checked{% endif %} {% if status == 'active' %}disabled title="Ballot status is locked while voting is active."{% endif %}> Enabled on ballot
             </label>
             <label>Photo (max 3 MB)
               <input type="file" name="photo" accept="image/jpeg,image/png,image/webp">
             </label>
             <div class="c-form-actions">
               <button class="btn btn-sm" type="submit">Save Changes</button>
-              <button class="btn btn-sm btn-danger btn-delete-contestant" type="button" data-cid="{{ c.id }}">Delete</button>
+              <button class="btn btn-sm btn-danger btn-delete-contestant" type="button" data-cid="{{ c.id }}" {% if status == 'active' %}disabled title="Contestants cannot be deleted while voting is active."{% endif %}>Delete</button>
               <span class="c-form-status notice" style="font-size:0.85rem"></span>
             </div>
           </form>
@@ -168,9 +168,12 @@
         </div>
 
         {% if g["items"]|length < max_per %}
-        <button type="button" class="btn btn-sm btn-ghost btn-add-contestant" data-cat-key="{{ g.key }}" style="margin-top:8px">
+        <button type="button" class="btn btn-sm btn-ghost btn-add-contestant" data-cat-key="{{ g.key }}" style="margin-top:8px" {% if status == 'active' %}disabled title="Contestants cannot be added while voting is active."{% endif %}>
           + Add Contestant
         </button>
+        {% endif %}
+        {% if status == 'active' %}
+        <p class="notice">Category, display order, ballot status, add and delete are locked while voting is active. Names and photos can still be updated.</p>
         {% endif %}
       </section>
       {% endfor %}

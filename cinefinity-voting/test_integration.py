@@ -1,13 +1,13 @@
 import json
 import os
 from app import app
-from utils.firebase import get_db
 
 def run_integration_tests():
     c = app.test_client()
-    db = get_db()
-    
-    admin_pw = os.environ.get("ADMIN_PASSWORD", "Admin@Cinefinity2026")
+
+    admin_pw = os.environ.get("ADMIN_PASSWORD")
+    if not admin_pw:
+        raise RuntimeError("Set ADMIN_PASSWORD before running integration tests.")
     print("Testing with admin credentials...")
 
     # 1. Admin Login

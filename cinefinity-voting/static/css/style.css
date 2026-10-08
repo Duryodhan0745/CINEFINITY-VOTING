@@ -750,6 +750,37 @@ input, select {
   flex-shrink: 0;
 }
 
+@media (max-width: 480px) {
+  .proj-contestant-row {
+    gap: 8px;
+    font-size: 0.95rem;
+  }
+
+  .proj-thumb,
+  .proj-thumb-avatar {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+  }
+
+  .proj-contestant-name {
+    min-width: 0;
+    flex: 0 1 92px;
+    overflow-wrap: anywhere;
+    font-size: 0.9rem;
+  }
+
+  .proj-bar-wrap {
+    min-width: 40px;
+    height: 18px;
+  }
+
+  .proj-vote-count {
+    min-width: 40px;
+    font-size: 0.9rem;
+  }
+}
+
 /* ===== CONNECTION BANNER ===== */
 .conn-banner {
   position: fixed;

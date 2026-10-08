@@ -23,6 +23,19 @@ from utils.helpers import CATEGORIES, MAX_PER_CATEGORY, SIGNATURES, validate_ima
 
 IS_PROD = bool(os.environ.get("RENDER"))
 
+if IS_PROD:
+    missing_config = [
+        name for name in ("FLASK_SECRET_KEY", "ADMIN_PASSWORD", "FIREBASE_STORAGE_BUCKET")
+        if not os.environ.get(name)
+    ]
+    credentials_path = os.environ.get("FIREBASE_CREDENTIALS_PATH", "./serviceAccountKey.json")
+    if not os.environ.get("FIREBASE_CREDENTIALS_JSON") and not os.path.isfile(credentials_path):
+        missing_config.append("FIREBASE_CREDENTIALS_JSON or FIREBASE_CREDENTIALS_PATH")
+    if missing_config:
+        raise RuntimeError(
+            "Missing required production configuration: " + ", ".join(missing_config)
+        )
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
 app.config.update(
@@ -84,6 +97,11 @@ def fail(message, code):
 
 
 # ---------- public (SPA) ----------
+
+@app.get("/health")
+def health():
+    return jsonify(status="ok")
+
 
 @app.get("/")
 def index():
@@ -193,7 +211,7 @@ def vote_submit():
 def api_results():
     status = get_status()
     tallies = fetch_tallies()
-    contestants = fetch_contestants(active_only=True)
+    contestants = fetch_contestants(active_only=False)
     categories = []
     for key, label in CATEGORIES.items():
         items = [
@@ -201,21 +219,25 @@ def api_results():
                 "id": c["id"],
                 "name": c.get("name", ""),
                 "photo_url": c.get("photo_url", ""),
+                "category": c.get("category", key),
+                "active": bool(c.get("active")),
+                "display_order": int(c.get("display_order", 0)),
                 "votes": int(tallies.get(key, {}).get(c["id"], 0)),
             }
             for c in contestants if c.get("category") == key
         ]
-        winner, tie, leader = None, False, None
+        winner, tie, leader, leader_tie = None, False, None, False
         if items:
             top = max(i["votes"] for i in items)
             leaders = [i for i in items if i["votes"] == top]
-            if status == "closed":
+            leader_tie = status == "active" and top > 0 and len(leaders) > 1
+            if status == "closed" and top > 0:
                 tie = len(leaders) > 1
                 winner = None if tie else leaders[0]["name"]
-            # current front-runner (shown live on projector even while voting is open)
-            leader = leaders[0] if leaders and not (len(leaders) > 1 and top == 0) else None
+            leader = leaders[0] if top > 0 and not leader_tie else None
         categories.append({"key": key, "label": label, "items": items,
-                           "winner": winner, "tie": tie, "leader": leader})
+                           "winner": winner, "tie": tie, "leader": leader,
+                           "leader_tie": leader_tie})
     return jsonify(status=status, ballots=int(tallies.get("ballots", 0)), categories=categories)
 
 
@@ -295,6 +317,8 @@ def admin_voting():
 @app.post("/api/admin/contestant/new")
 @admin_required
 def admin_new_contestant():
+    if get_status() == "active":
+        return fail("Stop voting before adding contestants.", 400)
     category = (request.get_json(silent=True) or {}).get("category") or request.form.get("category")
     db = get_db()
     if category not in CATEGORIES:
@@ -318,30 +342,54 @@ def admin_new_contestant():
 @admin_required
 def admin_update_contestant(cid):
     ref = get_db().collection("contestants").document(cid)
-    if not ref.get().exists:
+    snapshot = ref.get()
+    if not snapshot.exists:
         if request.is_json or request.path.startswith("/api/") or request.headers.get("X-Requested-With"):
             return fail("Contestant not found.", 404)
         flash("Contestant not found.")
         return redirect(url_for("index") + "#admin")
 
-    name = (request.form.get("name") or "").strip()[:60]
-    category = request.form.get("category")
+    current = snapshot.to_dict() or {}
+    payload = request.get_json(silent=True) or request.form
+    name = (payload.get("name") or current.get("name", "")).strip()[:60]
+    status = get_status()
+    active_voting = status == "active"
+    category = payload.get("category", current.get("category"))
+    order_raw = payload.get("display_order", current.get("display_order", 1))
+    try:
+        order = max(1, min(99, int(order_raw)))
+    except (TypeError, ValueError):
+        order = 1
+
     if not name or category not in CATEGORIES:
         if request.is_json or request.path.startswith("/api/") or request.headers.get("X-Requested-With"):
             return fail("A name and a valid category are required.", 400)
         flash("A name and a valid category are required.")
         return redirect(url_for("index") + "#admin")
-    try:
-        order = max(1, min(99, int(request.form.get("display_order", 1))))
-    except ValueError:
-        order = 1
 
-    active_raw = request.form.get("active")
+    active_raw = payload.get(
+        "active",
+        current.get("active", False) if active_voting else False,
+    )
     active = active_raw in ("on", "true", "1", True)
+    if active_voting:
+        structural_changes = (
+            category != current.get("category")
+            or order != int(current.get("display_order", 1))
+            or active != bool(current.get("active"))
+        )
+        if structural_changes:
+            return fail(
+                "Category, display order and ballot status are locked while voting is active.",
+                400,
+            )
 
-    data = {"name": name, "category": category, "display_order": order, "active": active}
+    data = {"name": name}
+    if not active_voting:
+        data.update(category=category, display_order=order, active=active)
 
     photo = request.files.get("photo")
+    photo_blob = None
     if photo and photo.filename:
         problem = validate_image(photo)
         if problem:
@@ -350,25 +398,55 @@ def admin_update_contestant(cid):
             flash(problem)
             return redirect(url_for("index") + "#admin")
         ext = SIGNATURES[photo.mimetype][1]
-        blob = get_bucket().blob(f"contestants/{cid}-{secrets.token_hex(4)}.{ext}")
-        blob.upload_from_file(photo.stream, content_type=photo.mimetype)
+        photo_blob = get_bucket().blob(f"contestants/{cid}-{secrets.token_hex(4)}.{ext}")
+        photo_blob.upload_from_file(photo.stream, content_type=photo.mimetype)
         try:
-            blob.make_public()
-            data["photo_url"] = blob.public_url
+            photo_blob.make_public()
+            data["photo_url"] = photo_blob.public_url
         except Exception:
             # Fallback when uniform bucket-level access is enabled:
             token = secrets.token_urlsafe(32)
-            blob.metadata = {"firebaseStorageDownloadTokens": token}
-            blob.patch()
+            photo_blob.metadata = {"firebaseStorageDownloadTokens": token}
+            photo_blob.patch()
             from urllib.parse import quote
             data["photo_url"] = (
-                f"https://firebasestorage.googleapis.com/v0/b/{blob.bucket.name}/o/"
-                f"{quote(blob.name, safe='')}?alt=media&token={token}"
+                f"https://firebasestorage.googleapis.com/v0/b/{photo_blob.bucket.name}/o/"
+                f"{quote(photo_blob.name, safe='')}?alt=media&token={token}"
             )
+        data["photo_storage_path"] = photo_blob.name
 
-    ref.update(data)
+    # Recheck before writing in case voting started while an image was uploading.
+    if get_status() == "active" and (
+        category != current.get("category")
+        or order != int(current.get("display_order", 1))
+        or active != bool(current.get("active"))
+    ):
+        if photo_blob:
+            photo_blob.delete()
+        return fail(
+            "Category, display order and ballot status are locked while voting is active.",
+            400,
+        )
+
+    try:
+        ref.update(data)
+    except Exception:
+        if photo_blob:
+            try:
+                photo_blob.delete()
+            except Exception:
+                app.logger.exception("Failed to clean up an uncommitted contestant photo")
+        raise
+
+    old_photo_path = current.get("photo_storage_path")
+    if photo_blob and old_photo_path and old_photo_path.startswith("contestants/"):
+        try:
+            get_bucket().blob(old_photo_path).delete()
+        except Exception:
+            app.logger.exception("Failed to remove the replaced contestant photo")
+
     if request.is_json or request.path.startswith("/api/") or request.headers.get("X-Requested-With"):
-        return jsonify(ok=True, data=data)
+        return jsonify(ok=True, data=data, id=cid)
     flash(f"Saved {name}.")
     return redirect(url_for("index") + "#admin")
 
@@ -377,6 +455,8 @@ def admin_update_contestant(cid):
 @app.post("/api/admin/contestant/<cid>/delete")
 @admin_required
 def admin_delete_contestant(cid):
+    if get_status() == "active":
+        return fail("Stop voting before deleting contestants.", 400)
     ref = get_db().collection("contestants").document(cid)
     if not ref.get().exists:
         if request.is_json or request.path.startswith("/api/") or request.headers.get("X-Requested-With"):

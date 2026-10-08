@@ -85,7 +85,7 @@ def create_or_update_env(project_id=None):
                 existing_vars[k.strip()] = v.strip()
 
     secret_key = existing_vars.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
-    admin_pw = existing_vars.get("ADMIN_PASSWORD") or "Admin@Cinefinity2026"
+    admin_pw = existing_vars.get("ADMIN_PASSWORD") or secrets.token_urlsafe(24)
     cred_path = existing_vars.get("FIREBASE_CREDENTIALS_PATH") or "./serviceAccountKey.json"
 
     # Default bucket name based on project_id if not set

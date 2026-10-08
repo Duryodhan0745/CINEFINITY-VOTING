@@ -87,7 +87,7 @@
     }
   }
 
-  function refreshBallot() {
+  function refreshBallot(preserveMessage = false) {
     if (!ballotForm) return;
     const catNames = getCategoryNames();
     const isClosed = config.status !== "active";
@@ -109,7 +109,7 @@
     const isComplete = catNames.length > 0 && chosenCount === catNames.length;
     if (submitBtn) submitBtn.disabled = isClosed || !isComplete;
 
-    if (msgEl && !isClosed) {
+    if (msgEl && !isClosed && !preserveMessage) {
       if (isComplete) {
         msgEl.textContent = "All categories selected! Ready to submit.";
         msgEl.style.color = "var(--ink)";
@@ -170,7 +170,7 @@
         }
       }
 
-      refreshBallot();
+      refreshBallot(true);
     });
   }
 
@@ -199,6 +199,7 @@
       if (d.status !== config.status) {
         updateVoterStatusUI(d.status, /*announce=*/ true);
       }
+      syncPublicContestants(d.categories);
     } catch (_) {
       _statusConsecutiveFailures++;
       if (_statusConsecutiveFailures >= 3 && connBanner) {
@@ -209,7 +210,7 @@
 
   function startStatusPolling() {
     if (statusPollInterval) return;
-    statusPollInterval = setInterval(pollVotingStatus, 4000);
+    statusPollInterval = setInterval(pollVotingStatus, 2500);
   }
 
   function stopStatusPolling() {
@@ -352,7 +353,7 @@
       if (adminBallotsCount) adminBallotsCount.textContent = d.ballots;
       if (adminVotesCount) adminVotesCount.textContent = d.total_votes;
 
-      renderAdminContestants(d.groups, d.categories, d.max_per);
+      renderAdminContestants(d.groups, d.categories, d.max_per, d.status);
     } catch (err) {
       console.error("Failed to load admin data", err);
     }
@@ -365,9 +366,10 @@
       .replace(/'/g, "&#039;");
   }
 
-  function renderAdminContestants(groups, categories, maxPer) {
+  function renderAdminContestants(groups, categories, maxPer, status) {
     if (!adminContainerEl) return;
     adminContainerEl.innerHTML = "";
+    const activeVoting = status === "active";
 
     groups.forEach((g) => {
       const sec = document.createElement("section");
@@ -403,20 +405,20 @@
             </div>
           </div>
           <label>Category
-            <select name="category">${catOptions}</select>
+            <select name="category" ${activeVoting ? 'disabled title="Category changes are locked while voting is active."' : ""}>${catOptions}</select>
           </label>
           <label>Display order
-            <input type="number" name="display_order" min="1" max="99" value="${Number(c.display_order) || 1}">
+            <input type="number" name="display_order" min="1" max="99" value="${Number(c.display_order) || 1}" ${activeVoting ? 'disabled title="Display order is locked while voting is active."' : ""}>
           </label>
           <label class="check">
-            <input type="checkbox" name="active" ${c.active ? "checked" : ""}> Enabled on ballot
+            <input type="checkbox" name="active" ${c.active ? "checked" : ""} ${activeVoting ? 'disabled title="Ballot status is locked while voting is active."' : ""}> Enabled on ballot
           </label>
           <label>Photo (max 3 MB)
             <input type="file" name="photo" accept="image/jpeg,image/png,image/webp">
           </label>
           <div class="c-form-actions">
             <button class="btn btn-sm" type="submit">Save Changes</button>
-            <button class="btn btn-sm btn-danger btn-delete-contestant" type="button" data-cid="${escHtml(c.id)}">Delete</button>
+            <button class="btn btn-sm btn-danger btn-delete-contestant" type="button" data-cid="${escHtml(c.id)}" ${activeVoting ? 'disabled title="Contestants cannot be deleted while voting is active."' : ""}>Delete</button>
             <span class="c-form-status notice" style="font-size:0.85rem"></span>
           </div>
         `;
@@ -427,6 +429,13 @@
 
       sec.appendChild(listDiv);
 
+      if (activeVoting) {
+        const lockNotice = document.createElement("p");
+        lockNotice.className = "notice";
+        lockNotice.textContent = "Category, display order, ballot status, add and delete are locked while voting is active. Names and photos can still be updated.";
+        sec.appendChild(lockNotice);
+      }
+
       if (g.items.length < maxPer) {
         const addBtn = document.createElement("button");
         addBtn.type = "button";
@@ -434,6 +443,10 @@
         addBtn.dataset.catKey = g.key;
         addBtn.style.marginTop = "8px";
         addBtn.textContent = "+ Add Contestant";
+        if (activeVoting) {
+          addBtn.disabled = true;
+          addBtn.title = "Contestants cannot be added while voting is active.";
+        }
         addBtn.addEventListener("click", () => addNewContestant(g.key));
         sec.appendChild(addBtn);
       }
@@ -460,7 +473,7 @@
         const data = await res.json().catch(() => ({}));
         if (res.ok && data.ok) {
           if (statusSpan) {
-            statusSpan.textContent = "✓ Saved!";
+            statusSpan.textContent = "Saved ✓";
             statusSpan.style.color = "green";
             setTimeout(() => { if (statusSpan) statusSpan.textContent = ""; }, 2500);
           }
@@ -515,6 +528,135 @@
     }
   }
 
+  function syncPublicContestants(categories) {
+    if (!ballotForm || !Array.isArray(categories)) return;
+    let changed = false;
+    const container = $("categories-container");
+
+    categories.forEach((category) => {
+      let section = [...ballotForm.querySelectorAll(".category")]
+        .find((item) => item.dataset.category === category.key);
+      if (!section) {
+        if (!container) return;
+        section = document.createElement("section");
+        section.className = "category";
+        section.dataset.category = category.key;
+        const heading = document.createElement("h3");
+        heading.id = `cat-${category.key}`;
+        heading.textContent = category.label.toUpperCase();
+        section.setAttribute("aria-labelledby", heading.id);
+        const cards = document.createElement("div");
+        cards.className = "cards";
+        section.append(heading, cards);
+        container.appendChild(section);
+        changed = true;
+      }
+
+      const cards = section.querySelector(".cards");
+      const existing = new Map(
+        [...cards.querySelectorAll(".card[data-cid]")].map((card) => [card.dataset.cid, card])
+      );
+      const desired = category.items.filter((item) => item.active).map((item) => {
+        let card = existing.get(item.id);
+        if (!card) {
+          card = createPublicCard(category.key, item);
+          changed = true;
+        } else {
+          changed = updatePublicCard(card, item) || changed;
+          existing.delete(item.id);
+        }
+        return card;
+      });
+
+      existing.forEach((card) => {
+        card.remove();
+        changed = true;
+      });
+
+      const current = [...cards.querySelectorAll(".card[data-cid]")];
+      if (current.length !== desired.length ||
+          current.some((card, index) => card !== desired[index])) {
+        cards.replaceChildren(...desired);
+        changed = true;
+      }
+    });
+
+    if (changed) refreshBallot();
+  }
+
+  function createPublicCard(categoryKey, item) {
+    const card = document.createElement("label");
+    card.className = "card";
+    card.dataset.cid = item.id;
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = categoryKey;
+    radio.value = item.id;
+    radio.disabled = config.status !== "active";
+    card.appendChild(radio);
+    const placeholder = document.createElement("div");
+    placeholder.className = "ph";
+    placeholder.setAttribute("aria-hidden", "true");
+    placeholder.textContent = "★";
+    card.appendChild(placeholder);
+    const name = document.createElement("span");
+    name.className = "name";
+    card.appendChild(name);
+    const select = document.createElement("span");
+    select.className = "select";
+    select.textContent = "Select";
+    card.appendChild(select);
+    updatePublicCard(card, item);
+    return card;
+  }
+
+  function updatePublicCard(card, item) {
+    let changed = false;
+    const name = card.querySelector(".name");
+    if (name && name.textContent !== item.name) {
+      name.textContent = item.name;
+      changed = true;
+    }
+
+    let image = card.querySelector("img");
+    const placeholder = card.querySelector(".ph");
+    if (item.photo_url) {
+      if (!image) {
+        image = document.createElement("img");
+        image.loading = "lazy";
+        image.width = 300;
+        image.height = 300;
+        if (placeholder) placeholder.replaceWith(image);
+        else card.appendChild(image);
+        changed = true;
+      }
+      const photoUrl = new URL(item.photo_url, window.location.href).href;
+      if (image.src !== photoUrl) {
+        image.src = photoUrl;
+        changed = true;
+      }
+      if (image.alt !== item.name) {
+        image.alt = item.name;
+        changed = true;
+      }
+    } else if (image) {
+      const fallback = document.createElement("div");
+      fallback.className = "ph";
+      fallback.setAttribute("aria-hidden", "true");
+      fallback.textContent = "★";
+      image.replaceWith(fallback);
+      changed = true;
+    }
+
+    const radio = card.querySelector('input[type="radio"]');
+    const shouldDisable = config.status !== "active";
+    if (radio && radio.disabled !== shouldDisable) {
+      radio.disabled = shouldDisable;
+      changed = true;
+    }
+    return changed;
+  }
+
   // Voting control buttons
   if (btnStartVoting) {
     btnStartVoting.addEventListener("click", async () => {
@@ -531,6 +673,7 @@
           updateVoterStatusUI("active", false);
           if (adminStatusBadge) { adminStatusBadge.textContent = "ACTIVE"; adminStatusBadge.className = "pill live"; }
           if (adminLiveBanner) { adminLiveBanner.style.display = "flex"; }
+          loadAdminData();
         } else {
           alert(data.error || "Failed to start voting.");
         }
@@ -557,6 +700,7 @@
           updateVoterStatusUI("closed", false);
           if (adminStatusBadge) { adminStatusBadge.textContent = "CLOSED"; adminStatusBadge.className = "pill closed"; }
           if (adminLiveBanner) { adminLiveBanner.style.display = "none"; }
+          loadAdminData();
         } else {
           alert(data.error || "Failed to stop voting.");
         }
@@ -690,8 +834,9 @@
       sec.appendChild(h2);
 
       // ── CURRENT LEADER / WINNER block ─────────────────────────────────────
-      const leader = cat.leader; // null if no votes yet or exact tie at 0
-      if (leader || (cat.winner || cat.tie)) {
+      const leader = cat.leader; // null if no votes yet or tied leaders
+      const liveTie = open && cat.leader_tie;
+      if (leader || cat.winner || cat.tie || liveTie) {
         const display = cat.tie
           ? null
           : (cat.winner ? cat.items.find((i) => i.name === cat.winner) : leader);
@@ -706,6 +851,20 @@
             <div class="proj-leader-info">
               <p class="proj-leader-label">RESULT</p>
               <p class="proj-leader-name" style="font-size:clamp(1.3rem,4vw,2.5rem)">TIE — Manual decision required</p>
+            </div>
+          `;
+        } else if (liveTie) {
+          const topVotes = Math.max(...cat.items.map((item) => item.votes));
+          const leaders = cat.items
+            .filter((item) => item.votes === topVotes)
+            .map((item) => escHtml(item.name.toUpperCase()))
+            .join(" / ");
+          leaderBlock.innerHTML = `
+            <span class="proj-leader-crown">🤝</span>
+            <div class="proj-leader-info">
+              <p class="proj-leader-label">CURRENT LEADERS — TIED</p>
+              <p class="proj-leader-name">${leaders}</p>
+              <p class="proj-leader-votes">${topVotes} VOTES EACH</p>
             </div>
           `;
         } else if (display) {

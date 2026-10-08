@@ -27,7 +27,30 @@ This automatically verifies Firestore, checks Cloud Storage, seeds default colle
 python app.py       # http://127.0.0.1:5000
 ```
 
-## 4. Event Day Flow
+## 4. Deploy on Render
+The Flask server runs on Render; Firebase provides Firestore and Storage. The
+repository stores the app in the `cinefinity-voting` subdirectory.
+
+- **Root Directory:** `cinefinity-voting`
+- **Build Command:** `pip install -r requirements.txt`
+- **Start Command:** `gunicorn app:app --workers 2 --threads 4 --timeout 60`
+- **Python version:** `3.13.5`
+- **Health Check Path:** `/health`
+
+Set these in the Render service's environment settings. Never commit their
+values or the service-account key:
+
+- `FLASK_SECRET_KEY`: a long random value (at least 32 characters).
+- `ADMIN_PASSWORD`: a strong, unique admin password.
+- `FIREBASE_STORAGE_BUCKET`: the exact bucket name shown in Firebase.
+- `FIREBASE_CREDENTIALS_JSON`: the complete service-account JSON, or use a
+  Render Secret File and set `FIREBASE_CREDENTIALS_PATH` to its mounted path.
+
+The app refuses to start on Render if required secrets or Firebase
+configuration are missing. `/health` checks that the web process is responding;
+it does not make a Firebase connectivity check.
+
+## 5. Event Day Flow
 1. Open `http://YOUR-DOMAIN/` and click the discrete `Admin ↗` button in the top corner.
 2. Log in with your admin password.
 3. Under **Contestants**, click **+ Add Contestant** (3 per category: Mr Freshers, Mrs Freshers, Mr Stylist, Mrs Stylist). Set names, upload photos, and toggle **Enabled on ballot**.

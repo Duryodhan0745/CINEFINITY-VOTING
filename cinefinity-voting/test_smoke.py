@@ -4,6 +4,11 @@ from app import app
 def run_tests():
     c = app.test_client()
 
+    health = c.get('/health')
+    assert health.status_code == 200
+    assert json.loads(health.data) == {'status': 'ok'}
+    print('GET /health: OK')
+
     # 1. Root page
     r = c.get('/')
     print('GET / status:', r.status_code)
